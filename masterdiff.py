@@ -1,13 +1,37 @@
 #!/usr/bin/python3
-from git import Repo
+from git import Repo, GitCommandError
 import re
 import argparse
 
-suffix_whitelist = (".c", ".cpp", ".cxx")           # TODO
+suffix_whitelist = (".c", ".cpp", ".cxx", ".h", ".hpp")           # TODO
 
-def get_sorted_commits(repo_path):
+def detect_main_branch(repo):
+    try:
+        for ref in repo.remotes.origin.refs:
+            if ref.name.endswith("/HEAD"):
+                target = ref.ref.target
+                return target.split("/")[-1]
+    except Exception:
+        pass
+
+    common_names = ["main", "master", "release", "develop"]
+    branches = [b.name for b in repo.branches]
+    for name in common_names:
+        if name in branches:
+            return name
+
+    if branches:
+        return branches[0]
+    raise Exception("Failed to auto-detect main branch. Maybe you can set branch name manually with `--branch [branch_name]` option.")
+
+def get_sorted_commits(repo_path, branch=None):
     repo = Repo(repo_path)
-    commits = list(repo.iter_commits("main", reverse=True)) # TODO: Can we autodetect the last commit?
+    if branch is None:
+        main_branch_name = detect_main_branch(repo)
+    else:
+        main_branch_name = branch
+    print(f"[+] Generating git diff for branch: {main_branch_name}")
+    commits = list(repo.iter_commits(main_branch_name, reverse=True))
     commit_list = []
     for commit in commits:
         commit_list.append({
@@ -68,12 +92,14 @@ if __name__ == "__main__":
     parser.add_argument('--repo', type=str, help='Your repoitory path', required=True)      
     parser.add_argument('--output', type=str, help='Output directory path, default: ./', default='./')
     parser.add_argument('--last', type=int, help='Number of recent changes to extract, default: 5', default=5)
+    parser.add_argument('--branch', type=str, help='Base branch for git diff')
 
     repo_path = parser.parse_args().repo
     output_path = parser.parse_args().output
     last = parser.parse_args().last
+    branch = parser.parse_args().branch
     
-    commits = get_sorted_commits(repo_path)
+    commits = get_sorted_commits(repo_path, branch)
     if not commits or len(commits) < 2:
         print("Not enough commits to compare.")
     else:
@@ -113,12 +139,12 @@ if __name__ == "__main__":
         for change in last_changes:
             for idx in range(len(change["all_changes"])):
                 file_name = change["current_commit"][:7] + "_" + change["previous_commit"][:7] + "_" + str(idx) + "_" + change["all_changes"][idx]["file"] + ".tgt"
-                with open(output_path + file_name, "w") as f:
+                with open(output_path + "/" + file_name, "w") as f:
                     for line in change["all_changes"][idx]["changed_lines"]:
                         f.write(change["all_changes"][idx]["file"] + ":" + str(line) + "\n")
                         change_pool.add(change["all_changes"][idx]["file"] + ":" + str(line))
 
-        with open(output_path + "targets.txt", "w") as f:
+        with open(output_path + "/targets.txt", "w") as f:
             for change in change_pool:
                 f.write(change + "\n")
-        
+
